@@ -60,7 +60,9 @@ def validate(model, loader, criterion, device, amp, threshold, epoch):
         masks = masks.to(device, non_blocking=True)
         height, width = masks.shape[-2:]
         # 完整影像验证：只填充输入，前向后裁回原尺寸，填充像素不参与损失和指标。
-        images = F.pad(images, (0, -width % stride, 0, -height % stride), mode="replicate")
+        images = F.pad(
+            images, (0, -width % stride, 0, -height % stride), mode="replicate"
+        )
         with torch.autocast(device_type=device.type, enabled=amp):
             logits = model(images)[..., :height, :width]
             loss = criterion(logits, masks)
@@ -79,53 +81,89 @@ def main():
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+    # 更适合复现实验
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
 
-    device = torch.device(training["device"])
+    device = torch.device(training["device"] if torch.cuda.is_available() else "cpu")
     amp = training["amp"] and device.type == "cuda"
     train_dataset = CAIDDataset(config, "train")
     val_dataset = CAIDDataset(config, "val")
     train_loader = DataLoader(
-        train_dataset, batch_size=training["batch_size"], shuffle=True,
-        num_workers=training["num_workers"], pin_memory=device.type == "cuda",
+        train_dataset,
+        batch_size=training["batch_size"],
+        shuffle=True,
+        num_workers=training["num_workers"],
+        pin_memory=device.type == "cuda",
         generator=torch.Generator().manual_seed(seed),
     )
     val_loader = DataLoader(
-        val_dataset, batch_size=training["val_batch_size"], shuffle=False,
-        num_workers=training["num_workers"], pin_memory=device.type == "cuda",
+        val_dataset,
+        batch_size=training["val_batch_size"],
+        shuffle=False,
+        num_workers=training["num_workers"],
+        pin_memory=device.type == "cuda",
     )
     model = create_model(config["model"]).to(device)
     criterion = create_loss(training["loss"])
     optimizer = getattr(torch.optim, training["optimizer"])(
-        model.parameters(), lr=training["learning_rate"], weight_decay=training["weight_decay"]
+        model.parameters(),
+        lr=training["learning_rate"],
+        weight_decay=training["weight_decay"],
     )
     scaler = torch.amp.GradScaler("cuda", enabled=amp)
     save_dir = ROOT / training["save_dir"]
     output_dir = ROOT / training["output_dir"]
     save_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
-    print(f"训练集：{len(train_dataset)} 张 | 验证集：{len(val_dataset)} 张 | 设备：{device} | CUDA AMP：{amp}")
+    print(
+        f"训练集：{len(train_dataset)} 张 | 验证集：{len(val_dataset)} 张 | 设备：{device} | CUDA AMP：{amp}"
+    )
 
-    fields = ["epoch", "train_loss", "val_loss", "val_iou", "val_f1", "val_precision", "val_recall", "learning_rate"]
+    fields = [
+        "epoch",
+        "train_loss",
+        "val_loss",
+        "val_iou",
+        "val_f1",
+        "val_precision",
+        "val_recall",
+        "learning_rate",
+    ]
     best_iou, best_epoch = -1.0, 0
-    with (output_dir / "history.csv").open("w", newline="", encoding="utf-8-sig") as stream:
+    with (output_dir / "history.csv").open(
+        "w", newline="", encoding="utf-8-sig"
+    ) as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
         for epoch in range(1, training["epochs"] + 1):
-            train_loss = train_one_epoch(model, train_loader, criterion, optimizer, scaler, device, amp, epoch)
-            val_loss, metrics = validate(model, val_loader, criterion, device, amp, training["metric_threshold"], epoch)
+            train_loss = train_one_epoch(
+                model, train_loader, criterion, optimizer, scaler, device, amp, epoch
+            )
+            val_loss, metrics = validate(
+                model,
+                val_loader,
+                criterion,
+                device,
+                amp,
+                training["metric_threshold"],
+                epoch,
+            )
             if metrics["iou"] > best_iou:
                 best_iou, best_epoch = metrics["iou"], epoch
                 torch.save(model.state_dict(), save_dir / "best.pth")
                 print(f"已更新 best.pth：Epoch {epoch}，val_iou={best_iou:.6f}")
 
             learning_rate = optimizer.param_groups[0]["lr"]
-            writer.writerow({
-                "epoch": epoch, "train_loss": train_loss, "val_loss": val_loss,
-                **{f"val_{name}": value for name, value in metrics.items()},
-                "learning_rate": learning_rate,
-            })
+            writer.writerow(
+                {
+                    "epoch": epoch,
+                    "train_loss": train_loss,
+                    "val_loss": val_loss,
+                    **{f"val_{name}": value for name, value in metrics.items()},
+                    "learning_rate": learning_rate,
+                }
+            )
             stream.flush()
             print(
                 f"Epoch {epoch}/{training['epochs']} | train_loss={train_loss:.4f} | val_loss={val_loss:.4f} | "

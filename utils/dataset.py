@@ -49,7 +49,9 @@ class CAIDDataset(Dataset):
         # 只归一化 RGB；掩码始终保持 0/1，转为 BCE 所需的 float32。
         image = self.preprocess(np.asarray(image, dtype=np.float32)).astype(np.float32)
         image = torch.from_numpy(np.ascontiguousarray(image.transpose(2, 0, 1)))
-        mask = torch.from_numpy(np.array(mask, dtype=np.float32, copy=True)).unsqueeze(0)
+        mask = torch.from_numpy(np.array(mask, dtype=np.float32, copy=True)).unsqueeze(
+            0
+        )
         return image, mask
 
     def augment(self, image, mask):

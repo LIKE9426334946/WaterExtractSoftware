@@ -35,15 +35,20 @@ def load_config(path: str | Path) -> AppConfig:
         app, server = data["app"], data["server"]
         inference, vis, files = data["inference"], data["visualization"], data["files"]
         config = AppConfig(
-            name=str(app["name"]), english_name=str(app["english_name"]),
-            version=str(app["version"]), host=str(server["host"]),
-            port=int(server["port"]), backend=str(inference["backend"]),
+            name=str(app["name"]),
+            english_name=str(app["english_name"]),
+            version=str(app["version"]),
+            host=str(server["host"]),
+            port=int(server["port"]),
+            backend=str(inference["backend"]),
             default_model=str(inference["default_model"]),
             threshold=unit_value(inference["threshold"], "预测阈值"),
             alpha=unit_value(vis["alpha"], "叠加透明度"),
-            water_color=str(vis["water_color"]), show_boundary=vis["show_boundary"],
+            water_color=str(vis["water_color"]),
+            show_boundary=vis["show_boundary"],
             output_dir=(path.parent / files["output_dir"]).resolve(),
-            max_upload_mb=int(files["max_upload_mb"]), max_pixels=int(files["max_pixels"]),
+            max_upload_mb=int(files["max_upload_mb"]),
+            max_pixels=int(files["max_pixels"]),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"config.yaml 配置无效：{exc}") from exc

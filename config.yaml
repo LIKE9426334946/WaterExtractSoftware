@@ -27,7 +27,7 @@ files:
 # CAID 官方压缩包（Zenodo v2）采用 VOC 目录结构；JPEGImages 内实际为 PNG。
 # root 指向直接包含 JPEGImages、SegmentationClass、ImageSets 的目录。
 dataset:
-  root: datasets/CAID
+  root: data/CAID/CAID
   train_images: JPEGImages
   train_masks: SegmentationClass
   val_images: JPEGImages
