@@ -1,12 +1,12 @@
 # WaterExtraction · 遥感影像水体智能提取系统
 
-**V1.0 — Gradio 界面与基础交互版本。** 仓库名称为 `WaterExtractSoftware`，软件名称为 `WaterExtraction`；项目文件直接放在仓库根目录。
+**V1.0 — Gradio 演示界面与独立的 CAID 训练模块。** 仓库名称为 `WaterExtractSoftware`，软件名称为 `WaterExtraction`；项目文件直接放在仓库根目录。
 
-> **当前没有训练、加载或运行任何深度学习模型。所有掩码、叠加图和统计都是模拟演示结果，不能作为真实水体提取结果或模型性能依据。** 四个模型选项共用同一个模拟后端。
+> **Gradio 界面仍使用模拟后端，尚未接入训练得到的模型。界面中的掩码、叠加图和统计均为模拟演示结果。** `train.py` 独立执行真实模型的训练与验证，不改变界面行为。
 
 ## 安装与启动
 
-使用 **Python 3.10 或更高版本**；本项目在 Python 3.12、Gradio 6.30.0 上验证。无需 GPU、CUDA、PyTorch、OpenCV、数据库或 Node.js。
+使用 **Python 3.10 或更高版本**；已验证 Python 3.12、Gradio 6.30.0、PyTorch 2.7.1 / torchvision 0.22.1、SMP 0.5.0。训练默认使用 CUDA；请按 [PyTorch 官方安装说明](https://pytorch.org/get-started/locally/) 安装与本机环境匹配的 PyTorch / torchvision，再安装项目依赖。单独运行演示界面无需 GPU。
 
 ```bash
 git clone https://github.com/LIKE9426334946/WaterExtractSoftware.git
@@ -31,7 +31,59 @@ python app.py
 
 浏览器打开 **http://127.0.0.1:7860**。按 `Ctrl+C` 停止程序。默认仅监听本机，不创建公开分享链接。
 
-## 功能与操作
+## CAID 模型训练
+
+### 数据集结构与标签
+
+数据来源：[CAID 官方 Zenodo v2](https://zenodo.org/records/16461280)、[作者仓库](https://github.com/lubyant/CAID)。本仓库不包含数据集或预训练权重。官方压缩包采用以下结构，**`JPEGImages` 中的文件实际为 `.png`**：
+
+```text
+datasets/CAID/
+├── JPEGImages/                  # 20,689 张 RGB PNG 影像
+│   └── img_9132.png
+├── SegmentationClass/           # 同名 PNG 标注
+│   └── img_9132.png
+└── ImageSets/Segmentation/
+    ├── train.txt                # 14,482 个文件名，不含扩展名
+    ├── val.txt                  # 3,103 个文件名，不含扩展名
+    └── test.txt                 # 训练代码不读取
+```
+
+已检查官方 ZIP 文件目录、完整 train/val 清单及四组实际样本；train/val 清单没有交集。抽查的影像为 500×500 RGB，标注为单通道 0/1。按照官方定义，数据读取时明确将 **0 / 黑色映射为背景 0，非零水体像素映射为 1**；也支持作者给出的黑色背景、红色水体调色板标注。Mask 不做图像归一化，返回 `(1, H, W)` 的 `float32` Tensor。
+
+下载并解压数据后，在 `config.yaml` 中设置 `dataset.root`，指向直接包含 `JPEGImages`、`SegmentationClass` 和 `ImageSets` 的目录。图像、标注通过清单中的同名 ID 配对，不按文件排列顺序配对。所有相对路径以项目根目录为基准，也可以设置绝对路径。
+
+### 配置与运行
+
+训练配置全部位于 `config.yaml` 的 `dataset`、`model`、`training` 三个部分。默认使用 U-Net / ResNet34 / ImageNet、384×384 训练裁剪、batch size 8、100 epochs、AdamW 和 BCE 损失。在已安装依赖且数据就绪后运行：
+
+```bash
+python train.py
+```
+
+Windows 未激活虚拟环境时，可使用 `.\.venv\Scripts\python.exe train.py`。
+
+- **设备**：默认 `training.device: cuda`、`amp: true`。CPU 训练需将 `device` 改为 `cpu`；AMP 只在 CUDA 上启用。
+- **模型**：修改 `model.name` 为 SMP 名称 `Unet`、`UnetPlusPlus`、`DeepLabV3Plus` 或 `FPN`，并设置相应的 `encoder_name`；不需要修改训练循环。输出为单通道原始 logits。
+- **编码器权重**：默认 `encoder_weights: imagenet`，首次创建模型需要联网下载权重。使用 `null` 时随机初始化，仍使用该编码器的 ImageNet 归一化参数。
+- **损失**：`BCEWithLogitsLoss` 调用 SMP 的 `SoftBCEWithLogitsLoss(smooth_factor=None)`，等价于不平滑标签的 BCE；改为 `DiceLoss` 即调用 SMP 二分类 Dice 损失。
+
+训练先按 `scale_range` 等比随机缩放，再按需填充、随机裁剪和水平/垂直翻转；图像和 Mask 共用几何变换，Mask 只使用最近邻插值。仅图像按编码器预训练要求归一化，返回 `(3, H, W)` Tensor。
+
+验证保留完整影像，不随机增强或裁剪；仅将模型输入填充到编码器步长的整数倍，再将输出裁回原尺寸。填充区域不参与损失和指标计算。默认验证 batch size 为 1，可处理不同尺寸影像。每次验证汇总全部样本的 TP、FP、FN、TN，再调用 `smp.metrics` 的 `micro` 归约计算**水体前景** IoU、F1、Precision、Recall。预测按 `sigmoid(logits) > metric_threshold` 二值化，阈值默认 0.5；指标不是各 batch 指标的平均值。随机种子固定，验证预处理确定；不使用测试集选择模型。
+
+### 训练输出
+
+```text
+weights/best.pth                 # 当前运行中验证 IoU 最佳的 model.state_dict()
+outputs/train/history.csv        # 每个 epoch 写入并刷新一行
+```
+
+仅当验证 IoU **严格提高**时覆盖 `best.pth`，不保存每轮权重，也不保存优化器状态。终端显示 tqdm 进度、训练/验证损失、四项指标，并在结束时输出最佳 epoch 与 IoU。CSV 包含 `epoch`、`train_loss`、`val_loss`、`val_iou`、`val_f1`、`val_precision`、`val_recall`、`learning_rate`。
+
+每次运行会重新创建训练日志，并在本次首次验证后写入最佳权重；若需保留多次实验，在运行前修改 `save_dir` 和 `output_dir`。数据集、生成的权重和运行日志均已加入 Git 忽略规则。
+
+## Gradio 功能与操作
 
 1. **上传影像**：选择 JPG、JPEG、PNG；显示缩略预览、原始影像、宽高及像素分辨率。默认最大 20 MB / 1600 万像素，可在配置中修改。
 2. **选择模型与阈值**：U-Net、U-Net++、DeepLabv3+、SegFormer；阈值默认 0.5，范围 0～1。模型选项暂不影响模拟掩码。
@@ -72,11 +124,13 @@ outputs/simulated_20261022_103000_<随机标识>/
 ```text
 WaterExtraction/                  # 克隆后的目录名默认是 WaterExtractSoftware
 ├── app.py                        # 配置、组装与启动
-├── config.yaml                   # 服务、阈值、显示及文件配置
+├── train.py                      # 独立训练、验证、日志与最佳权重保存
+├── config.yaml                   # 界面及全部训练配置
 ├── requirements.txt
 ├── models/
 │   ├── __init__.py
-│   └── inference.py              # Predictor 接口及模拟实现
+│   ├── inference.py              # Predictor 接口及模拟实现
+│   └── model_factory.py          # 直接调用 SMP 创建模型
 ├── ui/
 │   ├── __init__.py
 │   ├── layout.py                 # Gradio Blocks 布局与事件绑定
@@ -87,13 +141,18 @@ WaterExtraction/                  # 克隆后的目录名默认是 WaterExtractS
 │   ├── __init__.py
 │   ├── configuration.py          # 配置读取与校验
 │   ├── image_processing.py       # 图像读取、真实格式与尺寸校验
+│   ├── dataset.py                # CAID 清单、标签映射及同步增强
+│   ├── metrics.py                # SMP 统计量与全局指标
 │   ├── pipeline.py               # 推理、阈值化、统计及重绘流程
 │   ├── visualization.py          # 混色与边界计算
 │   └── exporting.py              # PNG、JSON 与 ZIP 导出
 ├── tests/
 │   ├── test_workflow.py          # 核心业务和状态回归检查
-│   └── test_gradio_api.py        # 真实 HTTP / Gradio 会话与下载流程
-└── outputs/                      # 保存结果，不提交运行生成的文件
+│   ├── test_gradio_api.py        # 真实 HTTP / Gradio 会话与下载流程
+│   └── test_training.py          # 数据语义、全局指标与最佳权重规则
+├── weights/                      # 最佳模型权重，不提交生成文件
+└── outputs/
+    └── train/                    # 训练 CSV；其他子目录保存界面模拟结果
 ```
 
 ## 后续接入真实模型
@@ -125,6 +184,8 @@ python -m unittest discover -s tests -v
 覆盖：二值像素与原尺寸、阈值端点、叠加透明度、背景保持、边界、重绘后统计不变、PNG/ZIP 导出、模拟元数据、格式/尺寸校验、灰度与透明通道、EXIF 旋转、清空/换图/参数变更状态、过期结果禁止保存，以及推理接口替换。
 
 另通过临时启动的本机 Gradio 服务验证上传、四个模型选项、提取、重绘、文件下载、阈值端点、换图、损坏上传、清空和会话隔离。测试结束自动关闭服务，使用临时输出目录；这些检查不替代浏览器外观验收。
+
+训练回归检查覆盖标签映射、图像/Mask 同步裁剪翻转、确定性验证、全局指标汇总、排除填充像素、两种损失反向传播、IoU 持平或下降时不保存，以及 CSV 字段。另用官方训练集两张、验证集两张实际样本运行过两轮 CPU 训练：384×384 裁剪、完整 500×500 验证、参数更新、权重重新加载和 CSV 写入均通过。该流程检查使用随机初始化；未进行完整 CAID 训练或 CUDA AMP 实机验证，不代表模型分割精度。
 
 浏览器验收建议：未上传直接提取 → 上传任意 JPG/PNG → 开始提取 → 修改透明度/颜色/边界 → 保存并下载 → 修改阈值并重新提取 → 换图 → 清空。确认页面与导出始终对应同一次操作。
 

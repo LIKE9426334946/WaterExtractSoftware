@@ -23,3 +23,47 @@ files:
   output_dir: outputs
   max_upload_mb: 20
   max_pixels: 16000000
+
+# CAID 官方压缩包（Zenodo v2）采用 VOC 目录结构；JPEGImages 内实际为 PNG。
+# root 指向直接包含 JPEGImages、SegmentationClass、ImageSets 的目录。
+dataset:
+  root: datasets/CAID
+  train_images: JPEGImages
+  train_masks: SegmentationClass
+  val_images: JPEGImages
+  val_masks: SegmentationClass
+  train_split: ImageSets/Segmentation/train.txt
+  val_split: ImageSets/Segmentation/val.txt
+  image_suffix: .png
+  mask_suffix: .png
+
+model:
+  # SMP 名称：Unet / UnetPlusPlus / DeepLabV3Plus / FPN
+  name: Unet
+  encoder_name: resnet34
+  encoder_weights: imagenet
+  in_channels: 3
+  classes: 1
+
+training:
+  image_size: 384
+  scale_range: [0.75, 1.25]
+  horizontal_flip_prob: 0.5
+  vertical_flip_prob: 0.5
+  batch_size: 8
+  # 验证保留完整图像；batch_size=1 也可以处理不同尺寸的影像。
+  val_batch_size: 1
+  epochs: 100
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  num_workers: 0
+  seed: 42
+  device: cuda
+  amp: true
+  optimizer: AdamW
+  # BCEWithLogitsLoss 对应 SMP SoftBCEWithLogitsLoss（不启用标签平滑）。
+  # 也可设置为 DiceLoss。
+  loss: BCEWithLogitsLoss
+  metric_threshold: 0.5
+  save_dir: weights
+  output_dir: outputs/train

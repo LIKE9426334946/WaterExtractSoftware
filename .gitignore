@@ -7,3 +7,9 @@ __pycache__/
 .DS_Store
 outputs/*
 !outputs/.gitkeep
+!outputs/train/
+outputs/train/*
+!outputs/train/.gitkeep
+weights/*
+!weights/.gitkeep
+datasets/
