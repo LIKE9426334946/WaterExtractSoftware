@@ -5,7 +5,6 @@ import random
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
@@ -14,6 +13,7 @@ import yaml
 from PIL import Image
 
 import train
+from models.model_using import UNetPPDeepLabV3Plus
 from utils.dataset import CAIDDataset
 from utils.metrics import batch_statistics, compute_metrics
 
@@ -25,7 +25,6 @@ class TrainingTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.config = yaml.safe_load(train.CONFIG_PATH.read_text(encoding="utf-8"))
         self.config["dataset"]["root"] = str(self.root)
-        self.config["model"]["encoder_weights"] = None
         self.config["training"].update(
             image_size=16, scale_range=[1.0, 1.0],
             horizontal_flip_prob=1.0, vertical_flip_prob=1.0,
@@ -65,6 +64,27 @@ class TrainingTests(unittest.TestCase):
         self.assertEqual(first[0].shape, (3, 13, 21))
         self.assertTrue(torch.equal(first[0], second[0]))
         np.testing.assert_array_equal(first[1][0].numpy(), self.water)
+        self.assertEqual(first[0].dtype, torch.float32)
+        mean = torch.tensor(self.config["training"]["image_mean"])[:, None, None]
+        std = torch.tensor(self.config["training"]["image_std"])[:, None, None]
+        expected = torch.tensor(self.water).expand(3, -1, -1).float()
+        torch.testing.assert_close(first[0], (expected - mean) / std)
+
+    def test_custom_network_preserves_odd_size_and_backpropagates_both_branches(self):
+        config = dict(self.config["model"], base_channels=4, aspp_channels=8, decoder_channels=8)
+        model = train.create_model(config)
+        self.assertIsInstance(model, UNetPPDeepLabV3Plus)
+        image = torch.randn(1, 3, 33, 47)
+        mask = torch.randint(0, 2, (1, 1, 33, 47)).float()
+        logits = model(image)
+        self.assertEqual(logits.shape, mask.shape)
+        loss = train.create_loss("BCEWithLogitsLoss")(logits, mask)
+        self.assertTrue(torch.isfinite(loss))
+        loss.backward()
+        for block in (model.encoder0, model.aspp, model.nested_decoder, model.deeplab_decoder, model.classifier):
+            gradients = [parameter.grad for parameter in block.parameters()]
+            self.assertTrue(all(gradient is not None and torch.isfinite(gradient).all() for gradient in gradients))
+            self.assertTrue(any(torch.count_nonzero(gradient) > 0 for gradient in gradients))
 
     def test_metrics_use_global_counts_and_strict_threshold(self):
         logits = torch.tensor([[[[10., 0., -10., -10.]]], [[[10., 10., 10., 10.]]]])
@@ -78,10 +98,8 @@ class TrainingTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["precision"], 0.4)
         self.assertEqual(metrics["recall"], 1.0)
 
-    def test_validation_excludes_padding_and_losses_support_backward(self):
+    def test_validation_keeps_original_size_and_losses_support_backward(self):
         class PixelModel(torch.nn.Module):
-            encoder = SimpleNamespace(output_stride=32)
-
             def forward(self, image):
                 self.input_shape = image.shape[-2:]
                 return image[:, :1]
@@ -91,7 +109,7 @@ class TrainingTests(unittest.TestCase):
         image = (mask * 20 - 10).repeat(1, 3, 1, 1)
         criterion = train.create_loss("BCEWithLogitsLoss")
         loss, metrics = train.validate(model, [(image, mask)], criterion, torch.device("cpu"), False, 0.5, 1)
-        self.assertEqual(model.input_shape, (32, 32))
+        self.assertEqual(model.input_shape, (13, 21))
         self.assertFalse(model.training)
         self.assertEqual(metrics, dict(iou=1.0, f1=1.0, precision=1.0, recall=1.0))
         self.assertAlmostEqual(loss, torch.nn.functional.binary_cross_entropy_with_logits(image[:, :1], mask).item())

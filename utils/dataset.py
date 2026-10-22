@@ -4,7 +4,6 @@ import random
 from pathlib import Path
 
 import numpy as np
-import segmentation_models_pytorch as smp
 import torch
 from PIL import Image, ImageOps
 from torch.utils.data import Dataset
@@ -14,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class CAIDDataset(Dataset):
     def __init__(self, config, split):
-        data, train, model = config["dataset"], config["training"], config["model"]
+        data, train = config["dataset"], config["training"]
         root = ROOT / data["root"]
         self.image_dir = root / data[f"{split}_images"]
         self.mask_dir = root / data[f"{split}_masks"]
@@ -26,9 +25,8 @@ class CAIDDataset(Dataset):
         self.scale_range = train["scale_range"]
         self.horizontal_flip_prob = train["horizontal_flip_prob"]
         self.vertical_flip_prob = train["vertical_flip_prob"]
-        self.preprocess = smp.encoders.get_preprocessing_fn(
-            model["encoder_name"], pretrained=model["encoder_weights"] or "imagenet"
-        )
+        self.mean = np.asarray(train["image_mean"], dtype=np.float32)
+        self.std = np.asarray(train["image_std"], dtype=np.float32)
 
     def __len__(self):
         return len(self.ids)
@@ -47,7 +45,7 @@ class CAIDDataset(Dataset):
             image, mask = self.augment(image, mask)
 
         # 只归一化 RGB；掩码始终保持 0/1，转为 BCE 所需的 float32。
-        image = self.preprocess(np.asarray(image, dtype=np.float32)).astype(np.float32)
+        image = (np.asarray(image, dtype=np.float32) / 255.0 - self.mean) / self.std
         image = torch.from_numpy(np.ascontiguousarray(image.transpose(2, 0, 1)))
         mask = torch.from_numpy(np.array(mask, dtype=np.float32, copy=True)).unsqueeze(
             0

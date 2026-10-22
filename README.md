@@ -17,7 +17,7 @@ python -m venv .venv
 Windows PowerShell（直接调用虚拟环境 Python，无需修改脚本执行策略）：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install gradio==6.30.0 segmentation-models-pytorch==0.5.0 numpy Pillow PyYAML tqdm
 .\.venv\Scripts\python.exe app.py
 ```
 
@@ -25,7 +25,7 @@ Windows CMD 也可先执行 `.venv\Scripts\activate.bat`，再执行以下通用
 
 ```bash
 source .venv/bin/activate
-python -m pip install -r requirements.txt
+python -m pip install gradio==6.30.0 segmentation-models-pytorch==0.5.0 numpy Pillow PyYAML tqdm
 python app.py
 ```
 
@@ -38,7 +38,7 @@ python app.py
 数据来源：[CAID 官方 Zenodo v2](https://zenodo.org/records/16461280)、[作者仓库](https://github.com/lubyant/CAID)。本仓库不包含数据集或预训练权重。官方压缩包采用以下结构，**`JPEGImages` 中的文件实际为 `.png`**：
 
 ```text
-datasets/CAID/
+data/CAID/CAID/
 ├── JPEGImages/                  # 20,689 张 RGB PNG 影像
 │   └── img_9132.png
 ├── SegmentationClass/           # 同名 PNG 标注
@@ -55,7 +55,7 @@ datasets/CAID/
 
 ### 配置与运行
 
-训练配置全部位于 `config.yaml` 的 `dataset`、`model`、`training` 三个部分。默认使用 U-Net / ResNet34 / ImageNet、384×384 训练裁剪、batch size 8、100 epochs、AdamW 和 BCE 损失。在已安装依赖且数据就绪后运行：
+训练配置全部位于 `config.yaml` 的 `dataset`、`model`、`training` 三个部分。训练使用 `models/model_using.py` 中的 **UNetPPDeepLabV3Plus**：共享卷积编码器、ASPP、U-Net++ 与 DeepLabv3+ 双分支融合，随机初始化。默认采用 384×384 训练裁剪、batch size 8、100 epochs、AdamW 和 BCE 损失。在已安装依赖且数据就绪后运行：
 
 ```bash
 python train.py
@@ -63,14 +63,14 @@ python train.py
 
 Windows 未激活虚拟环境时，可使用 `.\.venv\Scripts\python.exe train.py`。
 
-- **设备**：默认 `training.device: cuda`、`amp: true`。CPU 训练需将 `device` 改为 `cpu`；AMP 只在 CUDA 上启用。
-- **模型**：修改 `model.name` 为 SMP 名称 `Unet`、`UnetPlusPlus`、`DeepLabV3Plus` 或 `FPN`，并设置相应的 `encoder_name`；不需要修改训练循环。输出为单通道原始 logits。
-- **编码器权重**：默认 `encoder_weights: imagenet`，首次创建模型需要联网下载权重。使用 `null` 时随机初始化，仍使用该编码器的 ImageNet 归一化参数。
+- **设备**：默认 `training.device: cuda`、`amp: true`。CUDA 不可用时自动使用 CPU，也可设置 `device: cpu`；AMP 只在 CUDA 上启用。
+- **模型**：`model` 配置直接传给 `UNetPPDeepLabV3Plus`，可调整 `base_channels`、`aspp_channels`、`decoder_channels` 和 `aspp_rates`。水体二分类保持 `in_channels: 3`、`out_channels: 1`，输出与输入同尺寸的原始 logits。模型工厂直接导入该网络，不再创建 SMP 网络。
+- **初始化与归一化**：该网络使用自定义编码器，不加载 ImageNet 权重。RGB 先除以 255，再使用 `training.image_mean` / `image_std` 归一化；默认数值延续原训练配置的 ImageNet 均值和标准差，训练、验证使用相同设置。
 - **损失**：`BCEWithLogitsLoss` 调用 SMP 的 `SoftBCEWithLogitsLoss(smooth_factor=None)`，等价于不平滑标签的 BCE；改为 `DiceLoss` 即调用 SMP 二分类 Dice 损失。
 
-训练先按 `scale_range` 等比随机缩放，再按需填充、随机裁剪和水平/垂直翻转；图像和 Mask 共用几何变换，Mask 只使用最近邻插值。仅图像按编码器预训练要求归一化，返回 `(3, H, W)` Tensor。
+训练先按 `scale_range` 等比随机缩放，再按需填充、随机裁剪和水平/垂直翻转；图像和 Mask 共用几何变换，Mask 只使用最近邻插值。仅图像按配置归一化，返回 `(3, H, W)` Tensor。
 
-验证保留完整影像，不随机增强或裁剪；仅将模型输入填充到编码器步长的整数倍，再将输出裁回原尺寸。填充区域不参与损失和指标计算。默认验证 batch size 为 1，可处理不同尺寸影像。每次验证汇总全部样本的 TP、FP、FN、TN，再调用 `smp.metrics` 的 `micro` 归约计算**水体前景** IoU、F1、Precision、Recall。预测按 `sigmoid(logits) > metric_threshold` 二值化，阈值默认 0.5；指标不是各 batch 指标的平均值。随机种子固定，验证预处理确定；不使用测试集选择模型。
+验证直接输入完整影像，不随机增强、缩放或裁剪；网络内部按实际特征尺寸插值，输出与原始标注对齐，无需访问 SMP 编码器属性或额外填充。默认验证 batch size 为 1，可处理不同尺寸影像。每次验证汇总全部样本的 TP、FP、FN、TN，再调用 `smp.metrics` 的 `micro` 归约计算**水体前景** IoU、F1、Precision、Recall。预测按 `sigmoid(logits) > metric_threshold` 二值化，阈值默认 0.5；指标不是各 batch 指标的平均值。随机种子固定，验证预处理确定；不使用测试集选择模型。
 
 ### 训练输出
 
@@ -128,11 +128,11 @@ WaterExtraction/                  # 克隆后的目录名默认是 WaterExtractS
 ├── app.py                        # 配置、组装与启动
 ├── train.py                      # 独立训练、验证、日志与最佳权重保存
 ├── config.yaml                   # 界面及全部训练配置
-├── requirements.txt
 ├── models/
 │   ├── __init__.py
 │   ├── inference.py              # Predictor 接口及模拟实现
-│   └── model_factory.py          # 直接调用 SMP 创建模型
+│   ├── model_factory.py          # 从配置创建 UNetPPDeepLabV3Plus
+│   └── model_using.py            # 自定义 U-Net++ / DeepLabv3+ 融合网络
 ├── ui/
 │   ├── __init__.py
 │   ├── layout.py                 # Gradio Blocks 布局与事件绑定
@@ -187,7 +187,9 @@ python -m unittest discover -s tests -v
 
 另通过临时启动的本机 Gradio 服务验证上传、四个模型选项、提取、重绘、文件下载、阈值端点、换图、损坏上传、清空和会话隔离。测试结束自动关闭服务，使用临时输出目录；这些检查不替代浏览器外观验收。
 
-训练回归检查覆盖标签映射、图像/Mask 同步裁剪翻转、确定性验证、全局指标汇总、排除填充像素、两种损失反向传播、IoU 持平或下降时不保存，以及 CSV 字段。另用官方训练集两张、验证集两张实际样本运行过两轮 CPU 训练：384×384 裁剪、完整 500×500 验证、参数更新、权重重新加载和 CSV 写入均通过。该流程检查使用随机初始化；未进行完整 CAID 训练或 CUDA AMP 实机验证，不代表模型分割精度。
+训练回归检查覆盖标签映射、图像/Mask 同步裁剪翻转、归一化、确定性验证、全局指标汇总、原尺寸验证、两种损失反向传播、IoU 持平或下降时不保存，以及 CSV 字段。融合网络另检查奇数输入尺寸及两个解码分支的梯度。
+
+已使用默认通道配置的 `UNetPPDeepLabV3Plus`，在官方训练集两张、验证集两张实际样本上完成一轮 CPU 训练（batch size 1）：384×384 裁剪、完整 500×500 验证、参数更新、`best.pth` 严格重新加载和 CSV 写入均通过。未进行完整 CAID 训练或 CUDA AMP 实机验证，流程检查不代表模型分割精度。
 
 浏览器验收建议：未上传直接提取（应留在首页）→ 上传 JPG/PNG → 开始提取（进入三图结果页）→ 修改透明度/颜色/边界 → 保存并下载 → 返回上传 → 换图或修改参数并重新提取 → 清空（返回首页）。检查调整窗口大小、展开设置及显示下载链接后仍能看全页面，并确认显示与导出对应同一次操作。
 

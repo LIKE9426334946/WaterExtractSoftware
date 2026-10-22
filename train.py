@@ -7,7 +7,6 @@ from pathlib import Path
 import numpy as np
 import segmentation_models_pytorch as smp
 import torch
-import torch.nn.functional as F
 import yaml
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -54,17 +53,12 @@ def validate(model, loader, criterion, device, amp, threshold, epoch):
     model.eval()
     loss_sum, pixel_count = 0.0, 0
     totals = torch.zeros(4, dtype=torch.int64, device=device)
-    stride = model.encoder.output_stride
     for images, masks in tqdm(loader, desc=f"Epoch {epoch} 验证", leave=False):
         images = images.to(device, non_blocking=True)
         masks = masks.to(device, non_blocking=True)
-        height, width = masks.shape[-2:]
-        # 完整影像验证：只填充输入，前向后裁回原尺寸，填充像素不参与损失和指标。
-        images = F.pad(
-            images, (0, -width % stride, 0, -height % stride), mode="replicate"
-        )
+        # 融合网络按跳跃连接的实际尺寸插值，可直接验证完整影像。
         with torch.autocast(device_type=device.type, enabled=amp):
-            logits = model(images)[..., :height, :width]
+            logits = model(images)
             loss = criterion(logits, masks)
 
         loss_sum += loss.item() * masks.numel()
