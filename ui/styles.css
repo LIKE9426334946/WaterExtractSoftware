@@ -12,8 +12,7 @@ body { margin: 0; background: #f4f7fb; }
 #app-shell .html-container, #app-shell .html-container > .prose { padding: 0 !important; }
 .app-header { display: flex; align-items: center; gap: 12px; min-height: 40px; }
 .app-header h1 { margin: 0; color: #172a45; font-size: 22px; font-weight: 700; line-height: 1.4; }
-.simulation-badge { margin-left: auto; padding: 4px 10px; border-radius: 6px; background: #eaf2ff; color: #2563eb; font-size: 12px; white-space: nowrap; }
-.version { color: #8794a7; font-size: 12px; }
+.version { margin-left: auto; color: #8794a7; font-size: 12px; }
 #upload-page, #result-page { flex: 1 1 0; min-height: 0; gap: 12px; }
 #upload-page { width: min(100%, 1040px); margin: 0 auto; padding: 8px 0 4px; }
 #upload-preview { flex: 1 1 0; height: auto !important; min-height: 0 !important; border: 1px dashed #c9d7e8; border-radius: 14px; background: #fff; }

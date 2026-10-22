@@ -51,7 +51,7 @@ class Controller:
             return self.view(SessionData(), "等待上传遥感影像。")
         try:
             source = load_image(filepath, self.config.max_upload_mb, self.config.max_pixels)
-            return self.view(SessionData(source), "影像已就绪，设置参数后即可开始模拟提取。", tone="ready")
+            return self.view(SessionData(source), "影像已就绪，点击「开始提取」进行预测。", tone="ready")
         except ValueError as exc:
             gr.Warning(str(exc))
             return self.view(SessionData(), str(exc), tone="error")
@@ -64,12 +64,11 @@ class Controller:
             raise ValueError("上传影像尚未就绪，请等待预览完成后重新提取。")
         return state.source
 
-    def run(self, filepath, model_name, threshold, alpha, color, boundary, state: SessionData):
+    def run(self, filepath, threshold, alpha, color, boundary, state: SessionData):
         try:
             source = self.require_source(filepath, state)
-            result = extract(source, self.predictor, model_name, threshold, alpha, color, boundary)
-            label = "模拟提取完成；当前结果仅用于界面测试。" if result.is_simulation else "模型提取完成。"
-            return self.view(SessionData(source, result), label, tone="ready")
+            result = extract(source, self.predictor, threshold, alpha, color, boundary)
+            return self.view(SessionData(source, result), "水体提取完成。", tone="ready")
         except ValueError as exc:
             gr.Warning(str(exc))
             return self.view(replace(state, result=None), str(exc), tone="error")
@@ -94,13 +93,13 @@ class Controller:
             gr.Warning(str(exc))
             return self.view(state, str(exc), tone="error", only={"status", "downloads"})
 
-    def save(self, filepath, model_name, threshold, alpha, color, boundary, state: SessionData):
+    def save(self, filepath, threshold, alpha, color, boundary, state: SessionData):
         try:
             self.require_source(filepath, state)
             if state.result is None:
                 raise ValueError("尚无可保存的结果，请先点击「开始提取」。")
-            if state.result.model_name != model_name or state.result.threshold != float(threshold):
-                raise ValueError("模型或阈值已改变，请重新提取后再保存。")
+            if state.result.threshold != float(threshold):
+                raise ValueError("阈值已改变，请重新提取后再保存。")
             # 从当前控件读取样式，避免滑块更新与保存之间出现过期导出。
             result = redraw(state.result, alpha, color, boundary)
             files = save_result(result, self.config.output_dir)

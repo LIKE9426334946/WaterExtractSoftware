@@ -18,9 +18,9 @@ ROOT = Path(__file__).resolve().parent
 def main():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     config = load_config(ROOT / "config.yaml")
-    predictor = create_predictor(config.backend)
+    predictor = create_predictor(config)
     app = build_app(config, predictor)
-    print(f"{config.name} {config.version} — 模拟演示模式，未加载真实模型。")
+    print(f"{config.name} {config.version} — 模型权重：{config.checkpoint}")
     app.launch(
         server_name=config.host,
         server_port=config.port,

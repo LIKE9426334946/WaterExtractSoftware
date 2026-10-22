@@ -8,6 +8,8 @@ import torch
 from PIL import Image, ImageOps
 from torch.utils.data import Dataset
 
+from utils.preprocessing import image_to_tensor
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -45,8 +47,7 @@ class CAIDDataset(Dataset):
             image, mask = self.augment(image, mask)
 
         # 只归一化 RGB；掩码始终保持 0/1，转为 BCE 所需的 float32。
-        image = (np.asarray(image, dtype=np.float32) / 255.0 - self.mean) / self.std
-        image = torch.from_numpy(np.ascontiguousarray(image.transpose(2, 0, 1)))
+        image = image_to_tensor(image, self.mean, self.std)
         mask = torch.from_numpy(np.array(mask, dtype=np.float32, copy=True)).unsqueeze(
             0
         )

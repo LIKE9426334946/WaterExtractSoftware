@@ -8,9 +8,12 @@ server:
   port: 7860
 
 inference:
-  # 第一版只提供 simulation，尚未加载任何模型或权重。
-  backend: simulation
-  default_model: U-Net
+  # 使用下方 model 结构与 training 的归一化参数加载训练得到的 state_dict。
+  checkpoint: weights/best.pth
+  device: cuda
+  amp: true
+  tile_size: 384
+  tile_overlap: 64
   threshold: 0.5
 
 visualization:
@@ -38,7 +41,7 @@ dataset:
   mask_suffix: .png
 
 model:
-  # models/model_using.py 中的 UNetPPDeepLabV3Plus，随机初始化。
+  # models/model_using.py 中的 UNetPPDeepLabV3Plus；训练时随机初始化，应用加载权重。
   in_channels: 3
   out_channels: 1
   base_channels: 32

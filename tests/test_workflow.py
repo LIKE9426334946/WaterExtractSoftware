@@ -11,7 +11,7 @@ from zipfile import ZipFile
 import numpy as np
 from PIL import Image
 
-from models import MODEL_NAMES, Prediction, create_predictor
+from models import Prediction
 from ui.callbacks import Controller, SessionData
 from utils.configuration import load_config
 from utils.exporting import save_result
@@ -20,6 +20,14 @@ from utils.pipeline import extract, redraw
 from utils.visualization import inner_boundary
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class GradientPredictor:
+    """测试业务流程用的确定性概率图，不用于应用。"""
+
+    def predict(self, image):
+        scores = np.linspace(0.05, 0.95, image.shape[1], dtype=np.float32)
+        return Prediction(np.broadcast_to(scores, image.shape[:2]).copy(), "test predictor")
 
 
 class WorkflowTests(unittest.TestCase):
@@ -31,23 +39,20 @@ class WorkflowTests(unittest.TestCase):
         self.rgb = np.full((80, 120, 3), [100, 140, 80], dtype=np.uint8)
         Image.fromarray(self.rgb).save(self.path)
         self.source = load_image(self.path, 20, 1000000)
-        self.predictor = create_predictor()
+        self.predictor = GradientPredictor()
         self.config = replace(load_config(ROOT / "config.yaml"), output_dir=self.root / "outputs")
 
     def result(self, threshold=0.5, alpha=0.5, color="#2563EB", boundary=False):
-        return extract(self.source, self.predictor, "U-Net", threshold, alpha, color, boundary)
+        return extract(self.source, self.predictor, threshold, alpha, color, boundary)
 
-    def test_masks_statistics_and_model_options(self):
+    def test_masks_and_statistics(self):
         result = self.result()
         self.assertEqual(result.mask.shape, (80, 120))
         self.assertEqual(set(np.unique(result.mask)), {0, 255})
         self.assertEqual(result.water_pixels + result.background_pixels, 80 * 120)
         self.assertAlmostEqual(result.water_percent, (result.mask == 255).mean() * 100)
         self.assertGreaterEqual(result.elapsed_ms, 0)
-        self.assertTrue(result.is_simulation)
-        for model in MODEL_NAMES:
-            item = extract(self.source, self.predictor, model, 0.5, 0.5, "#2563EB", False)
-            np.testing.assert_array_equal(result.mask, item.mask)
+        self.assertEqual(result.model_name, "test predictor")
 
     def test_threshold_extremes_and_monotonicity(self):
         self.assertEqual(self.result(0).water_pixels, 9600)
@@ -79,13 +84,14 @@ class WorkflowTests(unittest.TestCase):
         with Image.open(paths[0]) as mask:
             self.assertEqual(mask.mode, "L")
             self.assertEqual(mask.size, (120, 80))
-            self.assertEqual(mask.info["Simulation"], "true")
+            self.assertEqual(mask.info["Simulation"], "false")
             np.testing.assert_array_equal(np.asarray(mask), result.mask)
         with Image.open(paths[1]) as overlay:
             np.testing.assert_array_equal(np.asarray(overlay), result.overlay)
         with ZipFile(paths[2]) as archive:
             metadata = json.loads(archive.read("statistics.json"))
-            self.assertTrue(metadata["is_simulation"])
+            self.assertFalse(metadata["is_simulation"])
+            self.assertEqual(metadata["model"], "test predictor")
             self.assertIsNone(metadata["spatial_resolution"])
             self.assertEqual(metadata["water_pixels"], result.water_pixels)
             self.assertIn("说明.txt", archive.namelist())
@@ -141,20 +147,22 @@ class WorkflowTests(unittest.TestCase):
     def test_empty_and_stale_save_cannot_export(self):
         controller = Controller(self.config, self.predictor)
         with patch("ui.callbacks.gr.Warning"):
-            empty = controller.run(None, "U-Net", 0.5, 0.5, "#2563EB", False, SessionData())
+            empty = controller.run(None, 0.5, 0.5, "#2563EB", False, SessionData())
             self.assertIsNone(empty[0].result)
-            controller.save(str(self.path), "U-Net", 0.9, 0.5, "#2563EB", False, SessionData(self.source, self.result()))
-            controller.save("another.png", "U-Net", 0.5, 0.5, "#2563EB", False, SessionData(self.source, self.result()))
+            controller.save(str(self.path), 0.9, 0.5, "#2563EB", False, SessionData(self.source, self.result()))
+            controller.save("another.png", 0.5, 0.5, "#2563EB", False, SessionData(self.source, self.result()))
         self.assertFalse(self.config.output_dir.exists())
 
     def test_injected_predictor_contract(self):
         class FixedPredictor:
-            def predict(self, image, model_name):
-                return Prediction(np.full(image.shape[:2], 0.8, dtype=np.float32), "test predictor", False)
-        result = extract(self.source, FixedPredictor(), "SegFormer", 0.5, 0.5, "#2563EB", False)
-        self.assertFalse(result.is_simulation)
+            def predict(self, image):
+                return Prediction(np.full(image.shape[:2], 0.8, dtype=np.float32), "test predictor")
+        result = extract(self.source, FixedPredictor(), 0.5, 0.5, "#2563EB", False)
         self.assertEqual(result.water_pixels, 9600)
-        self.assertEqual(result.model_name, "SegFormer")
+        self.assertEqual(result.model_name, "test predictor")
+        # 与训练指标保持相同的严格大于比较，概率等于阈值时属于背景。
+        at_threshold = extract(self.source, FixedPredictor(), 0.8, 0.5, "#2563EB", False)
+        self.assertEqual(at_threshold.water_pixels, 0)
 
 
 if __name__ == "__main__":

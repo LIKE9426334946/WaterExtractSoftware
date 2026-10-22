@@ -11,7 +11,6 @@ def header(config: AppConfig) -> str:
     return f"""
     <header class="app-header">
       <h1>{escape(config.name)}</h1>
-      <span class="simulation-badge">模拟演示</span>
       <span class="version">{escape(config.version)}</span>
     </header>"""
 
@@ -39,9 +38,7 @@ def statistics(result: ExtractionResult | None) -> str:
             f"{result.water_pixels:,}", f"{result.background_pixels:,}",
             f"{result.water_percent:.2f}%", f"{result.elapsed_ms:.2f} ms",
         ]
-    labels = ["图像尺寸 / px", "水体像素", "非水体像素", "水体占比", "模拟耗时"]
-    if result is not None and not result.is_simulation:
-        labels[-1] = "推理耗时"
+    labels = ["图像尺寸 / px", "水体像素", "非水体像素", "水体占比", "推理耗时"]
     cards = "".join(
         f'<div class="metric"><span>{label}</span><strong>{value}</strong></div>'
         for label, value in zip(labels, values)
@@ -52,8 +49,6 @@ def statistics(result: ExtractionResult | None) -> str:
 def result_note(result: ExtractionResult | None) -> str:
     if result is None:
         return ""
-    kind = "模拟结果" if result.is_simulation else "模型预测"
     return (
-        f'<div class="result-note"><b>{kind}</b><span>{escape(result.model_name)}'
-        f' · 阈值 {result.threshold:.2f}</span></div>'
+        f'<div class="result-note"><b>提取完成</b><span>阈值 {result.threshold:.2f}</span></div>'
     )

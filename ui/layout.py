@@ -2,7 +2,7 @@
 
 import gradio as gr
 
-from models import MODEL_NAMES, Predictor
+from models import Predictor
 from ui import presentation
 from ui.callbacks import Controller, SessionData
 from utils.configuration import AppConfig
@@ -59,10 +59,6 @@ def build_app(config: AppConfig, predictor: Predictor) -> gr.Blocks:
                 info = gr.HTML(presentation.image_info(None), elem_id="image-info")
                 with gr.Accordion("提取设置", open=False, elem_id="extract-settings"):
                     with gr.Row():
-                        model = gr.Dropdown(
-                            choices=list(MODEL_NAMES), value=config.default_model,
-                            label="模型", interactive=True, min_width=160,
-                        )
                         threshold = gr.Slider(
                             0, 1, value=config.threshold, step=0.01,
                             label="水体预测阈值", min_width=160,
@@ -91,11 +87,11 @@ def build_app(config: AppConfig, predictor: Predictor) -> gr.Blocks:
                         height="100%", buttons=["fullscreen"], min_width=0, elem_id="original-image",
                     )
                     mask = gr.Image(
-                        label="分割掩码 · 模拟", image_mode="L", interactive=False, format="png",
+                        label="分割掩码", image_mode="L", interactive=False, format="png",
                         height="100%", buttons=["fullscreen"], min_width=0, elem_id="mask-image",
                     )
                     overlay = gr.Image(
-                        label="叠加结果 · 模拟", interactive=False, format="png",
+                        label="叠加结果", interactive=False, format="png",
                         height="100%", buttons=["fullscreen"], min_width=0, elem_id="overlay-image",
                     )
 
@@ -119,11 +115,11 @@ def build_app(config: AppConfig, predictor: Predictor) -> gr.Blocks:
         upload.upload(controller.upload, [upload], outputs, api_name="load_image", **event_options).then(
             show_upload_page, None, pages, **navigation_options,
         )
-        parameters = [upload, model, threshold, alpha, color, boundary, state]
+        parameters = [upload, threshold, alpha, color, boundary, state]
         run_button.click(controller.run, parameters, outputs, api_name="extract", **event_options).then(
             show_result_page, [state], pages, **navigation_options,
         )
-        gr.on([model.input, threshold.release], controller.invalidate, [state], outputs, api_name="invalidate", **event_options).then(
+        threshold.release(controller.invalidate, [state], outputs, api_name="invalidate", **event_options).then(
             show_upload_page, None, pages, **navigation_options,
         )
         gr.on([alpha.release, color.change, boundary.change], controller.restyle, [upload, alpha, color, boundary, state], outputs, api_name="restyle", **event_options)
