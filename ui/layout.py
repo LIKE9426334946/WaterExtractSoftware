@@ -30,55 +30,106 @@ def build_theme():
     return theme.set(**palette, **{f"{key}_dark": value for key, value in palette.items()})
 
 
+def show_upload_page():
+    return gr.update(visible=True), gr.update(visible=False)
+
+
+def show_result_page(state: SessionData):
+    # 只有成功生成结果才进入第二页；未上传或提取失败时留在上传页。
+    ready = state.result is not None
+    return gr.update(visible=not ready), gr.update(visible=ready)
+
+
 def build_app(config: AppConfig, predictor: Predictor) -> gr.Blocks:
     controller = Controller(config, predictor)
-    with gr.Blocks(title=f"{config.name} | {config.version}", analytics_enabled=False, fill_width=True, delete_cache=(3600, 86400)) as app:
+    with gr.Blocks(
+        title=f"{config.name} | {config.version}", analytics_enabled=False,
+        fill_width=True, fill_height=True, delete_cache=(3600, 86400),
+    ) as app:
         state = gr.State(SessionData())
-        gr.HTML(presentation.header(config))
-        gr.HTML('<div class="simulation-banner"><b>模拟演示模式</b><span>未加载真实模型 · 当前结果仅用于软件界面测试，不代表真实水体分割。</span></div>')
+        with gr.Column(elem_id="app-shell", min_width=0):
+            gr.HTML(presentation.header(config), elem_id="app-heading")
 
-        with gr.Row(equal_height=False, elem_id="workspace"):
-            with gr.Column(scale=1, min_width=300, elem_id="operation-panel"):
-                gr.HTML('<div class="section-title"><span class="step-number">01</span><h2>影像与参数</h2></div>')
-                upload = gr.File(label="上传遥感影像", file_types=[".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"], type="filepath", height=100, elem_id="image-upload")
-                preview = gr.Image(label="上传预览", interactive=False, format="png", height=150, buttons=[], placeholder="上传后预览影像", elem_id="upload-preview")
-                info = gr.HTML(presentation.image_info(None))
-                model = gr.Dropdown(choices=list(MODEL_NAMES), value=config.default_model, label="模型选择", info="仅选择模型名称，当前均使用同一模拟后端。", interactive=True)
-                threshold = gr.Slider(0, 1, value=config.threshold, step=0.01, label="水体预测阈值", info="修改后需重新提取。")
-                alpha = gr.Slider(0, 1, value=config.alpha, step=0.01, label="叠加透明度", info="0：完全透明 · 1：完全着色")
-                with gr.Row():
-                    color = gr.ColorPicker(value=config.water_color, label="水体显示颜色", min_width=120)
-                    boundary = gr.Checkbox(value=config.show_boundary, label="显示水体边界", info="实色描绘，不改变掩码。", min_width=120)
-                run_button = gr.Button("开始提取", variant="primary", size="lg", elem_id="run-button")
-                with gr.Row():
-                    clear_button = gr.Button("清空结果", size="sm")
-                    save_button = gr.Button("保存结果", size="sm", interactive=False)
-                gr.HTML(f'<div class="panel-footnote">单张 ≤ {config.max_upload_mb} MB · ≤ {config.max_pixels / 1e6:g} MP<br>保持原始宽高比例与像素尺寸</div>')
+            with gr.Column(elem_id="upload-page", min_width=0) as upload_page:
+                preview = gr.Image(
+                    label="上传预览", show_label=False, interactive=False,
+                    format="png", height="100%", scale=1, buttons=[],
+                    placeholder="上传遥感影像", elem_id="upload-preview",
+                )
+                info = gr.HTML(presentation.image_info(None), elem_id="image-info")
+                with gr.Accordion("提取设置", open=False, elem_id="extract-settings"):
+                    with gr.Row():
+                        model = gr.Dropdown(
+                            choices=list(MODEL_NAMES), value=config.default_model,
+                            label="模型", interactive=True, min_width=160,
+                        )
+                        threshold = gr.Slider(
+                            0, 1, value=config.threshold, step=0.01,
+                            label="水体预测阈值", min_width=160,
+                        )
+                with gr.Row(elem_id="upload-actions"):
+                    upload = gr.UploadButton(
+                        "上传图像", type="filepath", size="lg", min_width=140,
+                        file_types=[".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"],
+                        elem_id="image-upload",
+                    )
+                    run_button = gr.Button(
+                        "开始提取", variant="primary", size="lg",
+                        min_width=140, elem_id="run-button",
+                    )
 
-            with gr.Column(scale=3, min_width=560, elem_id="result-panel"):
-                gr.HTML('<div class="section-title"><span class="step-number">02</span><h2>结果工作区</h2><span class="section-extra">影像对照 / 像素级可视化</span></div>')
-                note = gr.HTML(presentation.result_note(None))
+            with gr.Column(visible=False, elem_id="result-page", min_width=0) as result_page:
+                with gr.Row(elem_id="result-toolbar"):
+                    back_button = gr.Button("返回上传", scale=0, min_width=110, elem_id="back-button")
+                    note = gr.HTML(presentation.result_note(None), scale=1, min_width=0)
+                    save_button = gr.Button("保存结果", variant="primary", interactive=False, scale=0, min_width=110)
+                    clear_button = gr.Button("清空结果", scale=0, min_width=110)
+
                 with gr.Row(equal_height=True, elem_id="result-images"):
-                    original = gr.Image(label="原始遥感影像", interactive=False, format="png", height=320, buttons=["fullscreen"], placeholder="原始影像", min_width=200, elem_id="original-image")
-                    mask = gr.Image(label="水体二值分割掩码 · 模拟", image_mode="L", interactive=False, format="png", height=320, buttons=["fullscreen"], placeholder="等待模拟提取", min_width=200, elem_id="mask-image")
-                    overlay = gr.Image(label="水体提取叠加结果 · 模拟", interactive=False, format="png", height=320, buttons=["fullscreen"], placeholder="等待模拟提取", min_width=200, elem_id="overlay-image")
-                gr.HTML('<div class="legend"><span><i class="legend-square white"></i>白色：水体</span><span><i class="legend-square black"></i>黑色：背景</span><span>叠加结果支持透明度、颜色与边界显示</span></div>')
-                gr.HTML('<div class="subheading"><h3>结果统计</h3><span>基于当前原尺寸掩码计算</span></div>')
-                stats = gr.HTML(presentation.statistics(None), elem_id="result-statistics")
-                gr.HTML('<div class="statistics-note">水体面积占比 = 水体像素数 ÷ 总像素数。此处不计算真实地理面积；模拟耗时不代表模型性能。</div>')
-                status = gr.HTML(presentation.status("等待上传遥感影像。"), elem_id="operation-status")
-                downloads = gr.File(label="下载已保存结果（PNG / ZIP）", file_count="multiple", interactive=False, visible=False, elem_id="saved-files")
-                gr.HTML('<div class="quick-guide"><h3>使用流程</h3><p><b>1</b> 上传影像 <span>→</span> <b>2</b> 设置阈值并提取 <span>→</span> <b>3</b> 调整显示效果 <span>→</span> <b>4</b> 保存与下载</p><div>模拟器仅根据影像尺寸生成合成河道，不分析真实地物。导出文件同样标记为模拟结果。</div></div>')
+                    original = gr.Image(
+                        label="原始遥感影像", interactive=False, format="png",
+                        height="100%", buttons=["fullscreen"], min_width=0, elem_id="original-image",
+                    )
+                    mask = gr.Image(
+                        label="分割掩码 · 模拟", image_mode="L", interactive=False, format="png",
+                        height="100%", buttons=["fullscreen"], min_width=0, elem_id="mask-image",
+                    )
+                    overlay = gr.Image(
+                        label="叠加结果 · 模拟", interactive=False, format="png",
+                        height="100%", buttons=["fullscreen"], min_width=0, elem_id="overlay-image",
+                    )
 
-        gr.HTML('<footer class="app-footer"><span>WaterExtraction · 遥感水体提取工作台</span><span>V1.0 / 界面与基础交互版本</span></footer>')
+                with gr.Row(elem_id="visualization-controls"):
+                    alpha = gr.Slider(0, 1, value=config.alpha, step=0.01, label="叠加透明度", scale=2, min_width=160)
+                    color = gr.ColorPicker(value=config.water_color, label="水体颜色", scale=1, min_width=140)
+                    boundary = gr.Checkbox(value=config.show_boundary, label="显示水体边界", scale=1, min_width=140)
+                stats = gr.HTML(presentation.statistics(None), elem_id="result-statistics")
+                downloads = gr.File(
+                    label="下载结果", show_label=False, file_count="multiple",
+                    interactive=False, visible=False, elem_id="saved-files",
+                )
+
+            # 保留可访问的状态播报，视觉上不再占用一整行说明区。
+            status = gr.HTML(presentation.status("等待上传遥感影像。"), elem_id="operation-status")
+
         outputs = [state, preview, original, mask, overlay, info, stats, note, status, downloads, save_button]
-        # 所有状态修改按同一队列顺序执行，防止清空后被旧任务重新填充。
+        pages = [upload_page, result_page]
         event_options = dict(concurrency_id="water_workspace", concurrency_limit=1, show_progress="minimal")
-        gr.on([upload.upload, upload.clear], controller.upload, [upload], outputs, api_name="load_image", **event_options)
+        navigation_options = dict(api_name=False, **event_options)
+        upload.upload(controller.upload, [upload], outputs, api_name="load_image", **event_options).then(
+            show_upload_page, None, pages, **navigation_options,
+        )
         parameters = [upload, model, threshold, alpha, color, boundary, state]
-        run_button.click(controller.run, parameters, outputs, api_name="extract", **event_options)
-        gr.on([model.input, threshold.release], controller.invalidate, [state], outputs, api_name="invalidate", **event_options)
+        run_button.click(controller.run, parameters, outputs, api_name="extract", **event_options).then(
+            show_result_page, [state], pages, **navigation_options,
+        )
+        gr.on([model.input, threshold.release], controller.invalidate, [state], outputs, api_name="invalidate", **event_options).then(
+            show_upload_page, None, pages, **navigation_options,
+        )
         gr.on([alpha.release, color.change, boundary.change], controller.restyle, [upload, alpha, color, boundary, state], outputs, api_name="restyle", **event_options)
         save_button.click(controller.save, parameters, outputs, api_name="save_results", **event_options)
-        clear_button.click(controller.clear, None, [upload, *outputs], api_name="clear", **event_options)
+        clear_button.click(controller.clear, None, [upload, *outputs], api_name="clear", **event_options).then(
+            show_upload_page, None, pages, **navigation_options,
+        )
+        back_button.click(show_upload_page, None, pages, **navigation_options)
     return app.queue(default_concurrency_limit=1, max_size=16)
