@@ -1,0 +1,9 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.gradio/
+.DS_Store
+outputs/*
+!outputs/.gitkeep

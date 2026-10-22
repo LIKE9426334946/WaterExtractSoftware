@@ -1,0 +1,25 @@
+app:
+  name: 遥感影像水体智能提取系统
+  english_name: Remote Sensing Water Extraction System
+  version: V1.0
+
+server:
+  host: 127.0.0.1
+  port: 7860
+
+inference:
+  # 第一版只提供 simulation，尚未加载任何模型或权重。
+  backend: simulation
+  default_model: U-Net
+  threshold: 0.5
+
+visualization:
+  alpha: 0.5
+  water_color: "#2563EB"
+  show_boundary: false
+
+files:
+  # 相对路径以本配置文件所在目录为基准。
+  output_dir: outputs
+  max_upload_mb: 20
+  max_pixels: 16000000
