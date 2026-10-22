@@ -1,5 +1,10 @@
 """WaterExtraction 启动入口：python app.py。"""
 
+import os
+
+os.environ["NO_PROXY"] = "localhost,127.0.0.1,::1"
+os.environ["no_proxy"] = "localhost,127.0.0.1,::1"
+
 import logging
 from pathlib import Path
 
