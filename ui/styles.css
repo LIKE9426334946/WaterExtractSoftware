@@ -13,6 +13,9 @@ body { margin: 0; background: #f4f7fb; }
 .app-header { display: flex; align-items: center; gap: 12px; min-height: 40px; }
 .app-header h1 { margin: 0; color: #172a45; font-size: 22px; font-weight: 700; line-height: 1.4; }
 .version { margin-left: auto; color: #8794a7; font-size: 12px; }
+.logout-form { margin: 0; flex: 0 0 auto; }
+.logout-form button { padding: 6px 12px; border: 1px solid #dce4ee; border-radius: 7px; color: #526680; background: #fff; font: inherit; font-size: 12px; cursor: pointer; }
+.logout-form button:hover { color: #2563eb; border-color: #b9cff5; }
 #upload-page, #result-page { flex: 1 1 0; min-height: 0; gap: 12px; }
 #upload-page { width: min(100%, 1040px); margin: 0 auto; padding: 8px 0 4px; }
 #upload-preview { flex: 1 1 0; height: auto !important; min-height: 0 !important; border: 1px dashed #c9d7e8; border-radius: 14px; background: #fff; }

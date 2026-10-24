@@ -15,6 +15,8 @@ class AppConfig:
     version: str
     host: str
     port: int
+    users_file: Path
+    session_hours: int
     checkpoint: Path
     device: str
     amp: bool
@@ -45,6 +47,8 @@ def load_config(path: str | Path) -> AppConfig:
             version=str(app["version"]),
             host=str(server["host"]),
             port=int(server["port"]),
+            users_file=(path.parent / data["auth"]["users_file"]).resolve(),
+            session_hours=int(data["auth"]["session_hours"]),
             checkpoint=(path.parent / inference["checkpoint"]).resolve(),
             device=str(inference["device"]),
             amp=inference["amp"],

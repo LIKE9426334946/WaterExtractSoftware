@@ -12,6 +12,9 @@ def header(config: AppConfig) -> str:
     <header class="app-header">
       <h1>{escape(config.name)}</h1>
       <span class="version">{escape(config.version)}</span>
+      <form class="logout-form" action="/logout" method="post">
+        <button type="submit">退出登录</button>
+      </form>
     </header>"""
 
 

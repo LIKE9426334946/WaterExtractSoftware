@@ -1,22 +1,27 @@
 """通过真实本地 HTTP 服务验证 Gradio 序列化、会话和下载，不需浏览器。"""
 
 import json
+import socket
 import tempfile
+import time
 import unittest
 import warnings
 from dataclasses import replace
 from pathlib import Path
+from threading import Thread
 from zipfile import ZipFile
 
 import httpx
 import numpy as np
 import torch
+import uvicorn
 from gradio_client import Client, handle_file
 from PIL import Image
 
 from models import create_predictor
 from models.model_factory import create_model
-from ui.layout import build_app, build_theme
+from app import create_app
+from utils.authentication import SESSION_COOKIE
 from utils.configuration import load_config
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,18 +34,31 @@ class GradioRoundtripTests(unittest.TestCase):
             base = load_config(ROOT / "config.yaml")
             cfg = replace(
                 base, output_dir=directory / "outputs", checkpoint=directory / "best.pth",
+                users_file=directory / "users.json",
                 device="cpu", tile_size=64, tile_overlap=16,
                 model=dict(base.model, base_channels=4, aspp_channels=8, decoder_channels=8),
             )
             predictor = create_predictor(cfg)
-            app = build_app(cfg, predictor)
-            _, url, _ = app.launch(
-                server_name="127.0.0.1", share=False, prevent_thread_lock=True,
-                theme=build_theme(), css_paths=ROOT / "ui" / "styles.css",
-                footer_links=[], quiet=True,
-            )
+            app = create_app(cfg, predictor)
+            sock = socket.socket()
+            sock.bind(("127.0.0.1", 0))
+            self.addCleanup(sock.close)
+            origin = f"http://127.0.0.1:{sock.getsockname()[1]}/"
+            url = origin + "app/"
+            server = uvicorn.Server(uvicorn.Config(app, log_level="error"))
+            thread = Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+            thread.start()
             try:
+                for _ in range(100):
+                    if server.started:
+                        break
+                    time.sleep(0.05)
+                self.assertTrue(server.started)
                 with httpx.Client(trust_env=False) as http:
+                    self.assertEqual(http.get(url + "config").status_code, 401)
+                    response = http.post(origin + "login", data={"username": "admin", "password": "123456"})
+                    self.assertEqual(response.status_code, 303)
+                    cookies = dict(http.cookies)
                     self.assertEqual(http.get(url).status_code, 200)
                     config = http.get(url + "config").json()
                     self.assertIn("遥感影像水体智能提取系统", config["title"])
@@ -48,7 +66,7 @@ class GradioRoundtripTests(unittest.TestCase):
                     page_config = json.dumps(config, ensure_ascii=False)
                     for label in ("模拟", "UNetPPDeepLabV3Plus"):
                         self.assertNotIn(label, page_config)
-                client = Client(url, verbose=False)
+                client = Client(url, verbose=False, httpx_kwargs={"cookies": cookies.copy(), "trust_env": False})
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", UserWarning)
                     empty = client.predict(None, 0.5, 0.5, "#2563EB", False, api_name="/extract")
@@ -98,7 +116,7 @@ class GradioRoundtripTests(unittest.TestCase):
                     self.assertEqual(meta["model"], "UNetPPDeepLabV3Plus")
 
                 # 新会话不能看到或保存另一个会话的结果。
-                other = Client(url, verbose=False)
+                other = Client(url, verbose=False, httpx_kwargs={"cookies": cookies.copy(), "trust_env": False})
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", UserWarning)
                     isolated = other.predict(upload, 0.5, 1, "#FF0000", False, api_name="/save_results")
@@ -132,8 +150,13 @@ class GradioRoundtripTests(unittest.TestCase):
                 self.assertFalse(cleared[9]["visible"])
                 # 清空只影响会话，不删除此前显式保存的文件。
                 self.assertEqual(len(list(cfg.output_dir.glob("*/prediction_results.zip"))), 1)
+                with httpx.Client(cookies=cookies, trust_env=False) as http:
+                    self.assertEqual(http.post(origin + "logout").status_code, 303)
+                    http.cookies.set(SESSION_COOKIE, cookies[SESSION_COOKIE])
+                    self.assertEqual(http.get(url + "config").status_code, 401)
             finally:
-                app.close()
+                server.should_exit = True
+                thread.join(timeout=10)
 
 
 if __name__ == "__main__":
