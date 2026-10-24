@@ -103,7 +103,8 @@ class Controller:
             # 从当前控件读取样式，避免滑块更新与保存之间出现过期导出。
             result = redraw(state.result, alpha, color, boundary)
             files = save_result(result, self.config.output_dir)
-            return self.view(replace(state, result=result), "保存成功：掩码、叠加图和统计已写入输出目录；可在下方下载。", tone="ready", downloads=files, only={"state", "overlay", "status", "downloads", "save"})
+            gr.Info("保存成功，可在首页“查看保存结果”中查看。", duration=3)
+            return self.view(replace(state, result=result), "保存成功：原图、掩码、叠加图和统计已写入输出目录；可在下方下载或从首页查看。", tone="ready", downloads=files, only={"state", "overlay", "status", "downloads", "save"})
         except ValueError as exc:
             gr.Warning(str(exc))
             return self.view(state, str(exc), tone="error", only={"status", "downloads"})

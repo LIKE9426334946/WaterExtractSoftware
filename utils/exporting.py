@@ -9,10 +9,16 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from PIL import Image, PngImagePlugin
 
+from utils.history import history_lock, list_results
 from utils.pipeline import ExtractionResult
 
 
 def save_result(result: ExtractionResult, output_dir: Path) -> list[str]:
+    with history_lock:
+        return _write_result(result, output_dir)
+
+
+def _write_result(result: ExtractionResult, output_dir: Path) -> list[str]:
     prefix = "prediction"
     folder = output_dir / f"{prefix}_{datetime.now():%Y%m%d_%H%M%S}_{uuid4().hex[:10]}"
     folder.mkdir(parents=True, exist_ok=False)
@@ -35,18 +41,22 @@ def save_result(result: ExtractionResult, output_dir: Path) -> list[str]:
     png_info.add_itxt("Notice", notice)
     png_info.add_text("Simulation", "false")
     png_info.add_text("Software", "WaterExtraction")
+    original_path = folder / f"{prefix}_original.png"
     mask_path = folder / f"{prefix}_mask.png"
     overlay_path = folder / f"{prefix}_overlay.png"
     stats_path = folder / "statistics.json"
     archive_path = folder / f"{prefix}_results.zip"
     try:
+        # 保存处理后的 RGB 原图，历史查看不依赖上传缓存的生命周期。
+        Image.fromarray(result.source.rgb).save(original_path)
         Image.fromarray(result.mask).save(mask_path, pnginfo=png_info)
         Image.fromarray(result.overlay).save(overlay_path, pnginfo=png_info)
         stats_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
         with ZipFile(archive_path, "w", ZIP_DEFLATED) as archive:
-            for path in (mask_path, overlay_path, stats_path):
+            for path in (original_path, mask_path, overlay_path, stats_path):
                 archive.write(path, arcname=path.name)
             archive.writestr("说明.txt", notice + "\n掩码：0=背景，255=水体。面积占比为像素占比，不是地理面积。\n")
+        list_results(output_dir)
     except Exception:
         # 仅删除本次新建的未完成目录，不触碰既有保存结果。
         shutil.rmtree(folder, ignore_errors=True)

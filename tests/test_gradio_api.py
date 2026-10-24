@@ -63,10 +63,16 @@ class GradioRoundtripTests(unittest.TestCase):
                     config = http.get(url + "config").json()
                     self.assertIn("遥感影像水体智能提取系统", config["title"])
                     self.assertFalse(any(item["type"] == "dropdown" for item in config["components"]))
+                    pages = {item["props"].get("elem_id"): item["props"] for item in config["components"]}
+                    self.assertTrue(pages["home-page"]["visible"])
+                    for name in ("upload-page", "result-page", "history-page", "saved-page"):
+                        self.assertFalse(pages[name]["visible"])
                     page_config = json.dumps(config, ensure_ascii=False)
                     for label in ("模拟", "UNetPPDeepLabV3Plus"):
                         self.assertNotIn(label, page_config)
                 client = Client(url, verbose=False, httpx_kwargs={"cookies": cookies.copy(), "trust_env": False})
+                no_history = client.predict(api_name="/list_saved_results")
+                self.assertIn("暂无保存结果", no_history[1])
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", UserWarning)
                     empty = client.predict(None, 0.5, 0.5, "#2563EB", False, api_name="/extract")
@@ -109,6 +115,7 @@ class GradioRoundtripTests(unittest.TestCase):
                 for file in files:
                     self.assertTrue(Path(file).is_file())
                 with ZipFile(files[2]) as archive:
+                    self.assertIn("prediction_original.png", archive.namelist())
                     meta = json.loads(archive.read("statistics.json"))
                     self.assertEqual(meta["color"], "#FF0000")
                     self.assertEqual(meta["water_pixels"], int(np.count_nonzero(mask)))
@@ -117,6 +124,9 @@ class GradioRoundtripTests(unittest.TestCase):
 
                 # 新会话不能看到或保存另一个会话的结果。
                 other = Client(url, verbose=False, httpx_kwargs={"cookies": cookies.copy(), "trust_env": False})
+                history = other.predict(api_name="/list_saved_results")
+                self.assertIn("1 条保存结果", history[1])
+                self.assertEqual(history[0]["value"][0]["caption"], "编号 1")
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", UserWarning)
                     isolated = other.predict(upload, 0.5, 1, "#FF0000", False, api_name="/save_results")
@@ -150,6 +160,8 @@ class GradioRoundtripTests(unittest.TestCase):
                 self.assertFalse(cleared[9]["visible"])
                 # 清空只影响会话，不删除此前显式保存的文件。
                 self.assertEqual(len(list(cfg.output_dir.glob("*/prediction_results.zip"))), 1)
+                after_clear = client.predict(api_name="/list_saved_results")
+                self.assertIn("1 条保存结果", after_clear[1])
                 with httpx.Client(cookies=cookies, trust_env=False) as http:
                     self.assertEqual(http.post(origin + "logout").status_code, 303)
                     http.cookies.set(SESSION_COOKIE, cookies[SESSION_COOKIE])

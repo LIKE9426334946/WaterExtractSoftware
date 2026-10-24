@@ -5,6 +5,7 @@ import gradio as gr
 from models import Predictor
 from ui import presentation
 from ui.callbacks import Controller, SessionData
+from ui.history import HistoryController
 from utils.configuration import AppConfig
 
 
@@ -30,27 +31,60 @@ def build_theme():
     return theme.set(**palette, **{f"{key}_dark": value for key, value in palette.items()})
 
 
+PAGE_NAMES = ("home", "upload", "result", "history", "saved")
+
+
+def show_page(name: str):
+    return tuple(gr.update(visible=page == name) for page in PAGE_NAMES)
+
+
 def show_upload_page():
-    return gr.update(visible=True), gr.update(visible=False)
+    return show_page("upload")
 
 
 def show_result_page(state: SessionData):
-    # 只有成功生成结果才进入第二页；未上传或提取失败时留在上传页。
+    # 只有成功生成结果才进入结果页；未上传或提取失败时留在上传页。
     ready = state.result is not None
-    return gr.update(visible=not ready), gr.update(visible=ready)
+    return show_page("result" if ready else "upload")
+
+
+def result_images(prefix: str = ""):
+    with gr.Row(equal_height=True, elem_id=f"{prefix}result-images", elem_classes="result-images"):
+        images = []
+        for name, label in (("original", "原始遥感影像"), ("mask", "分割掩码"), ("overlay", "叠加结果")):
+            images.append(gr.Image(
+                label=label, image_mode="L" if name == "mask" else "RGB",
+                interactive=False, format="png", height="100%", buttons=["fullscreen"],
+                min_width=0, elem_id=f"{prefix}{name}-image", elem_classes="result-image",
+            ))
+    return images
 
 
 def build_app(config: AppConfig, predictor: Predictor) -> gr.Blocks:
     controller = Controller(config, predictor)
+    history = HistoryController(config.output_dir)
     with gr.Blocks(
         title=f"{config.name} | {config.version}", analytics_enabled=False,
         fill_width=True, fill_height=True, delete_cache=(3600, 86400),
     ) as app:
         state = gr.State(SessionData())
+        history_records = gr.State([])
         with gr.Column(elem_id="app-shell", min_width=0):
             gr.HTML(presentation.header(config), elem_id="app-heading")
 
-            with gr.Column(elem_id="upload-page", min_width=0) as upload_page:
+            with gr.Column(elem_id="home-page", min_width=0) as home_page:
+                with gr.Row(elem_id="home-options", equal_height=True):
+                    with gr.Column(elem_classes="home-card", min_width=0):
+                        gr.HTML('<div class="home-icon" aria-hidden="true"><svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10 24V12h12m20 0h12v12m0 16v12H42m-20 0H10V40"/><path d="M18 32c5-8 9 8 14 0s9 8 14 0M18 41c5-8 9 8 14 0s9 8 14 0"/></svg></div>')
+                        start_button = gr.Button("开始进行提取", variant="primary", size="lg", elem_id="start-extraction")
+                    with gr.Column(elem_classes="home-card", min_width=0):
+                        gr.HTML('<div class="home-icon" aria-hidden="true"><svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="12" y="12" width="40" height="40" rx="5"/><circle cx="24" cy="25" r="4"/><path d="m13 45 12-11 8 7 9-14 10 18"/></svg></div>')
+                        history_button = gr.Button("查看保存结果", size="lg", elem_id="view-history")
+
+            with gr.Column(visible=False, elem_id="upload-page", min_width=0) as upload_page:
+                with gr.Row(elem_classes="page-toolbar"):
+                    upload_home = gr.Button("返回首页", scale=0, min_width=100)
+                    gr.HTML('<h2 class="page-title">开始进行提取</h2>')
                 preview = gr.Image(
                     label="上传预览", show_label=False, interactive=False,
                     format="png", height="100%", scale=1, buttons=[],
@@ -76,24 +110,13 @@ def build_app(config: AppConfig, predictor: Predictor) -> gr.Blocks:
 
             with gr.Column(visible=False, elem_id="result-page", min_width=0) as result_page:
                 with gr.Row(elem_id="result-toolbar"):
+                    result_home = gr.Button("返回首页", scale=0, min_width=100)
                     back_button = gr.Button("返回上传", scale=0, min_width=110, elem_id="back-button")
                     note = gr.HTML(presentation.result_note(None), scale=1, min_width=0)
                     save_button = gr.Button("保存结果", variant="primary", interactive=False, scale=0, min_width=110)
                     clear_button = gr.Button("清空结果", scale=0, min_width=110)
 
-                with gr.Row(equal_height=True, elem_id="result-images"):
-                    original = gr.Image(
-                        label="原始遥感影像", interactive=False, format="png",
-                        height="100%", buttons=["fullscreen"], min_width=0, elem_id="original-image",
-                    )
-                    mask = gr.Image(
-                        label="分割掩码", image_mode="L", interactive=False, format="png",
-                        height="100%", buttons=["fullscreen"], min_width=0, elem_id="mask-image",
-                    )
-                    overlay = gr.Image(
-                        label="叠加结果", interactive=False, format="png",
-                        height="100%", buttons=["fullscreen"], min_width=0, elem_id="overlay-image",
-                    )
+                original, mask, overlay = result_images()
 
                 with gr.Row(elem_id="visualization-controls"):
                     alpha = gr.Slider(0, 1, value=config.alpha, step=0.01, label="叠加透明度", scale=2, min_width=160)
@@ -102,16 +125,53 @@ def build_app(config: AppConfig, predictor: Predictor) -> gr.Blocks:
                 stats = gr.HTML(presentation.statistics(None), elem_id="result-statistics")
                 downloads = gr.File(
                     label="下载结果", show_label=False, file_count="multiple",
-                    interactive=False, visible=False, elem_id="saved-files",
+                    interactive=False, visible=False, elem_id="saved-files", elem_classes="download-files",
+                )
+
+            with gr.Column(visible=False, elem_id="history-page", min_width=0) as history_page:
+                with gr.Row(elem_classes="page-toolbar"):
+                    history_home = gr.Button("返回首页", scale=0, min_width=100)
+                    gr.HTML('<h2 class="page-title">查看保存结果</h2>')
+                    refresh_history = gr.Button("刷新列表", scale=0, min_width=100)
+                history_summary = gr.HTML(elem_id="history-summary")
+                gallery = gr.Gallery(
+                    value=[], label="保存记录", show_label=False, interactive=False,
+                    columns=4, rows=2, height="100%", object_fit="contain",
+                    allow_preview=False, buttons=[], elem_id="history-gallery",
+                )
+
+            with gr.Column(visible=False, elem_id="saved-page", min_width=0) as saved_page:
+                with gr.Row(elem_classes="page-toolbar"):
+                    saved_home = gr.Button("返回首页", scale=0, min_width=100)
+                    back_history = gr.Button("返回列表", scale=0, min_width=100)
+                    saved_note = gr.HTML(elem_id="saved-note")
+                saved_original, saved_mask, saved_overlay = result_images("saved-")
+                saved_stats = gr.HTML(elem_id="saved-statistics")
+                saved_downloads = gr.File(
+                    label="下载结果", show_label=False, file_count="multiple",
+                    interactive=False, elem_id="history-downloads", elem_classes="download-files",
                 )
 
             # 保留可访问的状态播报，视觉上不再占用一整行说明区。
             status = gr.HTML(presentation.status("等待上传遥感影像。"), elem_id="operation-status")
 
         outputs = [state, preview, original, mask, overlay, info, stats, note, status, downloads, save_button]
-        pages = [upload_page, result_page]
+        pages = [home_page, upload_page, result_page, history_page, saved_page]
         event_options = dict(concurrency_id="water_workspace", concurrency_limit=1, show_progress="minimal")
         navigation_options = dict(api_name=False, **event_options)
+        start_button.click(show_upload_page, None, pages, **navigation_options)
+        gr.on([button.click for button in (upload_home, result_home, history_home, saved_home)],
+              lambda: show_page("home"), None, pages, **navigation_options)
+        gr.on([history_button.click, refresh_history.click, back_history.click],
+              history.refresh, None, [history_records, gallery, history_summary],
+              api_name="list_saved_results", **event_options).success(
+            lambda: show_page("history"), None, pages, **navigation_options,
+        )
+        gallery.select(
+            history.open, [history_records],
+            [saved_original, saved_mask, saved_overlay, saved_stats, saved_note, saved_downloads],
+            **navigation_options,
+        ).success(lambda: show_page("saved"), None, pages, **navigation_options)
         upload.upload(controller.upload, [upload], outputs, api_name="load_image", **event_options).then(
             show_upload_page, None, pages, **navigation_options,
         )

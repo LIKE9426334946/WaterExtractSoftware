@@ -4,6 +4,7 @@ from html import escape
 
 from utils.configuration import AppConfig
 from utils.image_processing import LoadedImage
+from utils.history import SavedResult
 from utils.pipeline import ExtractionResult
 
 
@@ -41,12 +42,35 @@ def statistics(result: ExtractionResult | None) -> str:
             f"{result.water_pixels:,}", f"{result.background_pixels:,}",
             f"{result.water_percent:.2f}%", f"{result.elapsed_ms:.2f} ms",
         ]
+    return metric_cards(values)
+
+
+def saved_statistics(metadata: dict) -> str:
+    return metric_cards([
+        f"{metadata['width']} × {metadata['height']}",
+        f"{metadata['water_pixels']:,}", f"{metadata['background_pixels']:,}",
+        f"{metadata['water_percent']:.2f}%", f"{metadata['elapsed_ms']:.2f} ms",
+    ])
+
+
+def metric_cards(values: list[str]) -> str:
     labels = ["图像尺寸 / px", "水体像素", "非水体像素", "水体占比", "推理耗时"]
     cards = "".join(
-        f'<div class="metric"><span>{label}</span><strong>{value}</strong></div>'
+        f'<div class="metric"><span>{label}</span><strong>{escape(value)}</strong></div>'
         for label, value in zip(labels, values)
     )
     return f'<div class="metrics-grid">{cards}</div>'
+
+
+def saved_note(record: SavedResult) -> str:
+    filename = escape(str(record.metadata["source_filename"]))
+    created_at = escape(str(record.metadata["created_at"])[:19].replace("T", " "))
+    missing = '<span class="missing-original">旧记录未保存原始影像</span>' if record.original is None else ""
+    return (
+        f'<div class="saved-note"><b>编号 {record.number}</b>'
+        f'<span class="saved-filename" title="{filename}">{filename}</span>'
+        f'<time>{created_at}</time>{missing}</div>'
+    )
 
 
 def result_note(result: ExtractionResult | None) -> str:
